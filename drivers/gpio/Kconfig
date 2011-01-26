@@ -251,6 +251,13 @@ config GPIO_GE_FPGA
 	  and write pin state) for GPIO implemented in a number of GE single
 	  board computers.
 
+config GPIO_WHOIFPGA
+	tristate "WHOIFPGA GPIO support"
+	depends on GPIOLIB
+	help
+	  Say yes here to support GPIO functionality of the WHOI FPGA.
+
+
 comment "I2C GPIO expanders:"
 
 config GPIO_MAX7300
