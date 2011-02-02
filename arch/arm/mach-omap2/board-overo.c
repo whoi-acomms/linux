@@ -413,6 +413,14 @@ static struct omap2_hsmmc_info mmc[] = {
 		.transceiver	= true,
 		.ocr_mask	= 0x00100000,	/* 3.3V */
 	},
+	{
+		.mmc		= 3,
+		.caps		= MMC_CAP_4_BIT_DATA,
+		.gpio_cd	= 149,
+		.gpio_wp	= -EINVAL,
+		.ocr_mask       = 0x00100000,   /* 3.3V */
+
+	},
 	{}	/* Terminator */
 };
 
