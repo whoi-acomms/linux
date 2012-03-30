@@ -213,6 +213,9 @@
 /* Energy Micro efm32 SoC */
 #define PORT_EFMUART   100
 
+/* NXP SC16IS7X2 */
+#define PORT_SC16IS7X2 101
+
 #ifdef __KERNEL__
 
 #include <linux/compiler.h>
