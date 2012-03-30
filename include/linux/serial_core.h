@@ -207,6 +207,9 @@
 /* Xilinx PSS UART */
 #define PORT_XUARTPS	98
 
+/* NXP SC16IS7X2 */
+#define PORT_SC16IS7X2 99
+
 #ifdef __KERNEL__
 
 #include <linux/compiler.h>
