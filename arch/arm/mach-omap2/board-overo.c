@@ -559,9 +559,31 @@ static int __init overo_i2c_init(void)
 	return 0;
 }
 
+#if defined(CONFIG_SERIAL_SC16IS7X2) || defined(CONFIG_SERIAL_SC16IS7X2_MODULE)
+#include <linux/serial_sc16is7x2.h>
+
+static struct sc16is7x2_platform_data sc16is7x2_pdata = {
+	.uartclk	= 22118400,
+	.uart_base	= 0,
+	.gpio_base	= OMAP_MAX_GPIO_LINES + TWL4030_GPIO_MAX + 4,
+};
+#endif
+
 static struct spi_board_info overo_spi_board_info[] __initdata = {
 
 #if !defined(CONFIG_TOUCHSCREEN_ADS7846) && \
+	!defined(CONFIG_TOUCHSCREEN_ADS7846_MODULE) && \
+	defined(CONFIG_SERIAL_SC16IS7X2) || defined(CONFIG_SERIAL_SC16IS7X2_MODULE)
+	{
+		.modalias		= "sc16is7x2",
+		.bus_num		= 1,
+		.chip_select		= 0,
+		.max_speed_hz		= 4000000,
+		.irq			= OMAP_GPIO_IRQ(OVERO_GPIO_PENDOWN),
+		.platform_data		= &sc16is7x2_pdata,
+		.mode			= SPI_MODE_0,
+	},
+#elif !defined(CONFIG_TOUCHSCREEN_ADS7846) && \
 	!defined(CONFIG_TOUCHSCREEN_ADS7846_MODULE) && \
 	(defined(CONFIG_SPI_SPIDEV) || defined(CONFIG_SPI_SPIDEV_MODULE))
 	{
