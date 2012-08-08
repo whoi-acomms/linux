@@ -430,8 +430,8 @@ static struct omap2_hsmmc_info mmc[] = {
 	},
 	{
 		.mmc		= 3,
-		.caps		= MMC_CAP_4_BIT_DATA,
-		.gpio_cd	= 149,
+		.caps		= MMC_CAP_4_BIT_DATA | MMC_CAP_NEEDS_POLL,
+		.gpio_cd	= -EINVAL,
 		.gpio_wp	= -EINVAL,
 		.ocr_mask       = 0x00100000,   /* 3.3V */
 
