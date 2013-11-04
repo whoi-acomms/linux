@@ -570,18 +570,29 @@ static struct twl4030_platform_data overo_twldata = {
 	.vmmc1		= &overo_vmmc1,
 };
 
-#if defined(CONFIG_RTC_DRV_DS3232) || \
-	defined(CONFIG_RTC_DRV_DS3232_MODULE)
 
+//We support multiple clocks based on Board Rev 
+//Rev C is the DS3231 which is supported by the DS1307 driver
+//Rev B is the DS3232 which is supported by the DS3232 driver
+//So we order based on preference to the newer board
 static struct i2c_board_info __initdata overo_i2c3_boardinfo[] = {
+#if defined(CONFIG_RTC_DRV_DS1307) || \
+	defined(CONFIG_RTC_DRV_DS1307_MODULE)
+	{
+		I2C_BOARD_INFO("rtc-ds1307", 0x68),
+		.type   = "ds3231",
+//		.irq	= 
+	},
+#elif defined(CONFIG_RTC_DRV_DS3232) || \
+	defined(CONFIG_RTC_DRV_DS3232_MODULE)
 	{
 		I2C_BOARD_INFO("rtc-ds3232", 0x68),
 		.type   = "ds3232",
 	},
-};
-#else
-static struct i2c_board_info __initdata overo_i2c3_boardinfo[] = {};
 #endif
+};
+
+
 
 static int __init overo_i2c_init(void)
 {
@@ -776,6 +787,40 @@ static inline void __init overo_init_musb(void)
 static inline void __init overo_init_musb(void) { return; }
 #endif
 
+#if defined(CONFIG_PPS_CLIENT_GPIO) 
+#include <linux/pps-gpio.h>
+
+/* PPS-GPIO platform data */
+static struct pps_gpio_platform_data pps_gpio_info = {
+ .assert_falling_edge = false,
+ .capture_clear = false,
+ .gpio_pin=186,
+ .gpio_label="EXT GPS PPS",
+};
+
+static struct platform_device ext_pps_gpio_device = {
+	.name = "pps-gpio",
+	.id = -1,
+	.dev = {
+		.platform_data = &pps_gpio_info
+	},
+};
+
+static inline void __init overo_pps_init(void)
+{
+	int err;
+
+	err = platform_device_register(&ext_pps_gpio_device);
+	if (err) 
+	{
+		pr_warning("Could not register EXT PPS_GPIO device");
+	}
+	return err;
+}
+#else
+static inline void __init overo_pps_init(void) { return;}
+#endif
+
 static void __init overo_init(void)
 {
 	int ret;
@@ -833,6 +878,7 @@ static void __init overo_init(void)
 	else
 		printk(KERN_ERR "could not obtain gpio for "
 					"OVERO_GPIO_USBH_CPEN\n");
+	overo_pps_init();
 }
 
 MACHINE_START(OVERO, "Gumstix Overo")
