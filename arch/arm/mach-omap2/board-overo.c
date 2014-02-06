@@ -767,7 +767,7 @@ static inline void __init overo_init_musb(void)
 static inline void __init overo_init_musb(void) { return; }
 #endif
 
-#if defined(CONFIG_PPS_CLIENT_GPIO) 
+//#if defined(CONFIG_PPS_CLIENT_GPIO) 
 #include <linux/pps-gpio.h>
 
 /* PPS-GPIO platform data */
@@ -797,9 +797,9 @@ static inline void __init overo_pps_init(void)
 	}
 	return err;
 }
-#else
-static inline void __init overo_pps_init(void) { return;}
-#endif
+//#else
+//static inline void __init overo_pps_init(void) { return;}
+//#endif
 
 static void __init overo_init(void)
 {
