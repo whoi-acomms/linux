@@ -883,6 +883,7 @@ read_rtc:
 				bin2bcd(tmp));
 	}
 
+	device_set_wakeup_capable(&client->dev,chip->alarm);
 	ds1307->rtc = rtc_device_register(client->name, &client->dev,
 				&ds13xx_rtc_ops, THIS_MODULE);
 	if (IS_ERR(ds1307->rtc)) {
@@ -901,7 +902,6 @@ read_rtc:
 			goto exit_irq;
 		}
 
-		device_set_wakeup_capable(&client->dev, 1);
 		set_bit(HAS_IRQ, &ds1307->flags);
 		dev_dbg(&client->dev, "got IRQ %d\n", client->irq);
 	}
