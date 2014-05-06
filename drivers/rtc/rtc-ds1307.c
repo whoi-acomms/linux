@@ -105,7 +105,8 @@ struct ds1307 {
 	enum ds_type		type;
 	unsigned long		flags;
 #define HAS_NVRAM	0		/* bit 0 == sysfs file active */
-#define HAS_ALARM	1		/* bit 1 == irq claimed */
+#define HAS_ALARM	1		/* bit 1 == has alarm */
+#define HAS_IRQ		2		/* bit 2 == irq claimed */
 	struct i2c_client	*client;
 	struct rtc_device	*rtc;
 	struct work_struct	work;
@@ -278,7 +279,7 @@ static void ds1307_work(struct work_struct *work)
 	}
 
 out:
-	if (test_bit(HAS_ALARM, &ds1307->flags))
+	if (test_bit(HAS_IRQ, &ds1307->flags))
 		enable_irq(client->irq);
 	mutex_unlock(lock);
 }
@@ -890,9 +891,13 @@ read_rtc:
 		}
 
 		device_set_wakeup_capable(&client->dev, 1);
-		set_bit(HAS_ALARM, &ds1307->flags);
+		set_bit(HAS_IRQ, &ds1307->flags);
 		dev_dbg(&client->dev, "got IRQ %d\n", client->irq);
 	}
+
+	/* has Alarm? */
+	if(chip->alarm)
+		set_bit(HAS_ALARM,&ds1307->flags);
 
 	if (chip->nvram56) {
 		err = sysfs_create_bin_file(&client->dev.kobj, &nvram);
@@ -915,7 +920,7 @@ static int __devexit ds1307_remove(struct i2c_client *client)
 {
 	struct ds1307		*ds1307 = i2c_get_clientdata(client);
 
-	if (test_and_clear_bit(HAS_ALARM, &ds1307->flags)) {
+	if (test_and_clear_bit(HAS_IRQ, &ds1307->flags)) {
 		free_irq(client->irq, client);
 		cancel_work_sync(&ds1307->work);
 	}
