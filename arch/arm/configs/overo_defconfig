@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/arm 3.2.0 Kernel Configuration
+# Linux/arm 3.2.51 Kernel Configuration
 #
 CONFIG_ARM=y
 CONFIG_SYS_SUPPORTS_APM_EMULATION=y
@@ -508,8 +508,7 @@ CONFIG_NEON=y
 # Userspace binary formats
 #
 CONFIG_BINFMT_ELF=y
-CONFIG_HAVE_AOUT=y
-CONFIG_BINFMT_AOUT=m
+# CONFIG_HAVE_AOUT is not set
 CONFIG_BINFMT_MISC=y
 
 #
@@ -2434,7 +2433,6 @@ CONFIG_USB_STORAGE_ONETOUCH=m
 CONFIG_USB_STORAGE_KARMA=m
 CONFIG_USB_STORAGE_CYPRESS_ATACB=m
 # CONFIG_USB_STORAGE_ENE_UB6250 is not set
-# CONFIG_USB_UAS is not set
 # CONFIG_USB_LIBUSUAL is not set
 
 #
