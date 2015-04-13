@@ -27,6 +27,8 @@
 #define NFSD_MAY_BYPASS_GSS		0x400
 #define NFSD_MAY_READ_IF_EXEC		0x800
 
+#define NFSD_MAY_64BIT_COOKIE		0x1000 /* 64 bit readdir cookies for >= NFSv3 */
+
 #define NFSD_MAY_CREATE		(NFSD_MAY_EXEC|NFSD_MAY_WRITE)
 #define NFSD_MAY_REMOVE		(NFSD_MAY_EXEC|NFSD_MAY_WRITE|NFSD_MAY_TRUNC)
 
@@ -105,5 +107,15 @@ int		nfsd_sync_dir(struct dentry *dp);
 struct posix_acl *nfsd_get_posix_acl(struct svc_fh *, int);
 int nfsd_set_posix_acl(struct svc_fh *, int, struct posix_acl *);
 #endif
+
+static inline int fh_want_write(struct svc_fh *fh)
+{
+	return mnt_want_write(fh->fh_export->ex_path.mnt);
+}
+
+static inline void fh_drop_write(struct svc_fh *fh)
+{
+	mnt_drop_write(fh->fh_export->ex_path.mnt);
+}
 
 #endif /* LINUX_NFSD_VFS_H */

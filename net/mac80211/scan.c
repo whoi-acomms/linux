@@ -213,14 +213,6 @@ ieee80211_scan_rx(struct ieee80211_sub_if_data *sdata, struct sk_buff *skb)
 	if (bss)
 		ieee80211_rx_bss_put(sdata->local, bss);
 
-	/* If we are on-operating-channel, and this packet is for the
-	 * current channel, pass the pkt on up the stack so that
-	 * the rest of the stack can make use of it.
-	 */
-	if (ieee80211_cfg_on_oper_channel(sdata->local)
-	    && (channel == sdata->local->oper_channel))
-		return RX_CONTINUE;
-
 	dev_kfree_skb(skb);
 	return RX_QUEUED;
 }
@@ -231,6 +223,9 @@ static bool ieee80211_prep_hw_scan(struct ieee80211_local *local)
 	struct cfg80211_scan_request *req = local->scan_req;
 	enum ieee80211_band band;
 	int i, ielen, n_chans;
+
+	if (test_bit(SCAN_HW_CANCELLED, &local->scanning))
+		return false;
 
 	do {
 		if (local->hw_scan_band == IEEE80211_NUM_BANDS)
@@ -264,8 +259,6 @@ static void __ieee80211_scan_completed(struct ieee80211_hw *hw, bool aborted,
 				       bool was_hw_scan)
 {
 	struct ieee80211_local *local = hw_to_local(hw);
-	bool on_oper_chan;
-	bool enable_beacons = false;
 
 	lockdep_assert_held(&local->mtx);
 
@@ -298,25 +291,11 @@ static void __ieee80211_scan_completed(struct ieee80211_hw *hw, bool aborted,
 	local->scanning = 0;
 	local->scan_channel = NULL;
 
-	on_oper_chan = ieee80211_cfg_on_oper_channel(local);
-
-	if (was_hw_scan || !on_oper_chan)
-		ieee80211_hw_config(local, IEEE80211_CONF_CHANGE_CHANNEL);
-	else
-		/* Set power back to normal operating levels. */
-		ieee80211_hw_config(local, 0);
-
+	ieee80211_hw_config(local, IEEE80211_CONF_CHANGE_CHANNEL);
 	if (!was_hw_scan) {
-		bool on_oper_chan2;
 		ieee80211_configure_filter(local);
 		drv_sw_scan_complete(local);
-		on_oper_chan2 = ieee80211_cfg_on_oper_channel(local);
-		/* We should always be on-channel at this point. */
-		WARN_ON(!on_oper_chan2);
-		if (on_oper_chan2 && (on_oper_chan != on_oper_chan2))
-			enable_beacons = true;
-
-		ieee80211_offchannel_return(local, enable_beacons, true);
+		ieee80211_offchannel_return(local, true);
 	}
 
 	ieee80211_recalc_idle(local);
@@ -357,15 +336,13 @@ static int ieee80211_start_sw_scan(struct ieee80211_local *local)
 	 */
 	drv_sw_scan_start(local);
 
+	ieee80211_offchannel_stop_beaconing(local);
+
 	local->leave_oper_channel_time = 0;
 	local->next_scan_state = SCAN_DECISION;
 	local->scan_channel_idx = 0;
 
-	/* We always want to use off-channel PS, even if we
-	 * are not really leaving oper-channel.  Don't
-	 * tell the AP though, as long as we are on-channel.
-	 */
-	ieee80211_offchannel_enable_all_ps(local, false);
+	drv_flush(local, false);
 
 	ieee80211_configure_filter(local);
 
@@ -508,20 +485,7 @@ static void ieee80211_scan_state_decision(struct ieee80211_local *local,
 	}
 	mutex_unlock(&local->iflist_mtx);
 
-	next_chan = local->scan_req->channels[local->scan_channel_idx];
-
-	if (ieee80211_cfg_on_oper_channel(local)) {
-		/* We're currently on operating channel. */
-		if (next_chan == local->oper_channel)
-			/* We don't need to move off of operating channel. */
-			local->next_scan_state = SCAN_SET_CHANNEL;
-		else
-			/*
-			 * We do need to leave operating channel, as next
-			 * scan is somewhere else.
-			 */
-			local->next_scan_state = SCAN_LEAVE_OPER_CHANNEL;
-	} else {
+	if (local->scan_channel) {
 		/*
 		 * we're currently scanning a different channel, let's
 		 * see if we can scan another channel without interfering
@@ -537,6 +501,7 @@ static void ieee80211_scan_state_decision(struct ieee80211_local *local,
 		 *
 		 * Otherwise switch back to the operating channel.
 		 */
+		next_chan = local->scan_req->channels[local->scan_channel_idx];
 
 		bad_latency = time_after(jiffies +
 				ieee80211_scan_get_channel_time(next_chan),
@@ -554,6 +519,12 @@ static void ieee80211_scan_state_decision(struct ieee80211_local *local,
 			local->next_scan_state = SCAN_ENTER_OPER_CHANNEL;
 		else
 			local->next_scan_state = SCAN_SET_CHANNEL;
+	} else {
+		/*
+		 * we're on the operating channel currently, let's
+		 * leave that channel now to scan another one
+		 */
+		local->next_scan_state = SCAN_LEAVE_OPER_CHANNEL;
 	}
 
 	*next_delay = 0;
@@ -562,10 +533,9 @@ static void ieee80211_scan_state_decision(struct ieee80211_local *local,
 static void ieee80211_scan_state_leave_oper_channel(struct ieee80211_local *local,
 						    unsigned long *next_delay)
 {
-	/* PS will already be in off-channel mode,
-	 * we do that once at the beginning of scanning.
-	 */
-	ieee80211_offchannel_stop_vifs(local, false);
+	ieee80211_offchannel_stop_station(local);
+
+	__set_bit(SCAN_OFF_CHANNEL, &local->scanning);
 
 	/*
 	 * What if the nullfunc frames didn't arrive?
@@ -588,15 +558,15 @@ static void ieee80211_scan_state_enter_oper_channel(struct ieee80211_local *loca
 {
 	/* switch back to the operating channel */
 	local->scan_channel = NULL;
-	if (!ieee80211_cfg_on_oper_channel(local))
-		ieee80211_hw_config(local, IEEE80211_CONF_CHANGE_CHANNEL);
+	ieee80211_hw_config(local, IEEE80211_CONF_CHANGE_CHANNEL);
 
 	/*
-	 * Re-enable vifs and beaconing.  Leave PS
-	 * in off-channel state..will put that back
-	 * on-channel at the end of scanning.
+	 * Only re-enable station mode interface now; beaconing will be
+	 * re-enabled once the full scan has been completed.
 	 */
-	ieee80211_offchannel_return(local, true, false);
+	ieee80211_offchannel_return(local, false);
+
+	__clear_bit(SCAN_OFF_CHANNEL, &local->scanning);
 
 	*next_delay = HZ / 5;
 	local->next_scan_state = SCAN_DECISION;
@@ -848,7 +818,23 @@ void ieee80211_scan_cancel(struct ieee80211_local *local)
 	if (!local->scan_req)
 		goto out;
 
+	/*
+	 * We have a scan running and the driver already reported completion,
+	 * but the worker hasn't run yet or is stuck on the mutex - mark it as
+	 * cancelled.
+	 */
+	if (test_bit(SCAN_HW_SCANNING, &local->scanning) &&
+	    test_bit(SCAN_COMPLETED, &local->scanning)) {
+		set_bit(SCAN_HW_CANCELLED, &local->scanning);
+		goto out;
+	}
+
 	if (test_bit(SCAN_HW_SCANNING, &local->scanning)) {
+		/*
+		 * Make sure that __ieee80211_scan_completed doesn't trigger a
+		 * scan on another band.
+		 */
+		set_bit(SCAN_HW_CANCELLED, &local->scanning);
 		if (local->ops->cancel_hw_scan)
 			drv_cancel_hw_scan(local, local->scan_sdata);
 		goto out;

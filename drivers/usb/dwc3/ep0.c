@@ -149,20 +149,14 @@ static int __dwc3_gadget_ep0_queue(struct dwc3_ep *dep,
 
 		direction = !!(dep->flags & DWC3_EP0_DIR_IN);
 
-		if (dwc->ep0state == EP0_STATUS_PHASE) {
-			type = dwc->three_stage_setup
-				? DWC3_TRBCTL_CONTROL_STATUS3
-				: DWC3_TRBCTL_CONTROL_STATUS2;
-		} else if (dwc->ep0state == EP0_DATA_PHASE) {
-			type = DWC3_TRBCTL_CONTROL_DATA;
-		} else {
-			/* should never happen */
-			WARN_ON(1);
+		if (dwc->ep0state != EP0_DATA_PHASE) {
+			dev_WARN(dwc->dev, "Unexpected pending request\n");
 			return 0;
 		}
 
 		ret = dwc3_ep0_start_trans(dwc, direction,
-				req->request.dma, req->request.length, type);
+				req->request.dma, req->request.length,
+				DWC3_TRBCTL_CONTROL_DATA);
 		dep->flags &= ~(DWC3_EP_PENDING_REQUEST |
 				DWC3_EP0_DIR_IN);
 	}
@@ -400,6 +394,8 @@ static int dwc3_ep0_handle_feature(struct dwc3 *dwc,
 			dep =  dwc3_wIndex_to_dep(dwc, ctrl->wIndex);
 			if (!dep)
 				return -EINVAL;
+			if (set == 0 && (dep->flags & DWC3_EP_WEDGE))
+				break;
 			ret = __dwc3_gadget_ep_set_halt(dep, set);
 			if (ret)
 				return -EINVAL;
@@ -578,8 +574,9 @@ static void dwc3_ep0_complete_data(struct dwc3 *dwc,
 		dwc->ep0_bounced = false;
 	} else {
 		transferred = ur->length - trb.length;
-		ur->actual += transferred;
 	}
+
+	ur->actual += transferred;
 
 	if ((epnum & 1) && ur->actual < ur->length) {
 		/* for some reason we did not get everything out */

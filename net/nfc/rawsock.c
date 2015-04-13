@@ -52,7 +52,10 @@ static int rawsock_release(struct socket *sock)
 {
 	struct sock *sk = sock->sk;
 
-	nfc_dbg("sock=%p", sock);
+	nfc_dbg("sock=%p sk=%p", sock, sk);
+
+	if (!sk)
+		return 0;
 
 	sock_orphan(sk);
 	sock_put(sk);
@@ -244,8 +247,6 @@ static int rawsock_recvmsg(struct kiocb *iocb, struct socket *sock,
 	skb = skb_recv_datagram(sk, flags, noblock, &rc);
 	if (!skb)
 		return rc;
-
-	msg->msg_namelen = 0;
 
 	copied = skb->len;
 	if (len < copied) {

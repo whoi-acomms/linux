@@ -398,13 +398,18 @@ static int ttm_pool_get_num_unused_pages(void)
 static int ttm_pool_mm_shrink(struct shrinker *shrink,
 			      struct shrink_control *sc)
 {
-	static atomic_t start_pool = ATOMIC_INIT(0);
+	static DEFINE_MUTEX(lock);
+	static unsigned start_pool;
 	unsigned i;
-	unsigned pool_offset = atomic_add_return(1, &start_pool);
+	unsigned pool_offset;
 	struct ttm_page_pool *pool;
 	int shrink_pages = sc->nr_to_scan;
 
-	pool_offset = pool_offset % NUM_POOLS;
+	if (shrink_pages == 0)
+		goto out;
+	if (!mutex_trylock(&lock))
+		return -1;
+	pool_offset = ++start_pool % NUM_POOLS;
 	/* select start pool in round robin fashion */
 	for (i = 0; i < NUM_POOLS; ++i) {
 		unsigned nr_free = shrink_pages;
@@ -413,6 +418,8 @@ static int ttm_pool_mm_shrink(struct shrinker *shrink,
 		pool = &_manager->pools[(i + pool_offset)%NUM_POOLS];
 		shrink_pages = ttm_page_pool_free(pool, nr_free);
 	}
+	mutex_unlock(&lock);
+out:
 	/* return estimated number of unused pages in pool */
 	return ttm_pool_get_num_unused_pages();
 }
@@ -708,7 +715,10 @@ int ttm_get_pages(struct list_head *pages, int flags,
 	/* clear the pages coming from the pool if requested */
 	if (flags & TTM_PAGE_FLAG_ZERO_ALLOC) {
 		list_for_each_entry(p, pages, lru) {
-			clear_page(page_address(p));
+			if (PageHighMem(p))
+				clear_highpage(p);
+			else
+				clear_page(page_address(p));
 		}
 	}
 

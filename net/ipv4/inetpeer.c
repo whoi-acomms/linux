@@ -17,6 +17,7 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/net.h>
+#include <linux/workqueue.h>
 #include <net/ip.h>
 #include <net/inetpeer.h>
 #include <net/secure_seq.h>
@@ -25,20 +26,7 @@
  *  Theory of operations.
  *  We keep one entry for each peer IP address.  The nodes contains long-living
  *  information about the peer which doesn't depend on routes.
- *  At this moment this information consists only of ID field for the next
- *  outgoing IP packet.  This field is incremented with each packet as encoded
- *  in inet_getid() function (include/net/inetpeer.h).
- *  At the moment of writing this notes identifier of IP packets is generated
- *  to be unpredictable using this code only for packets subjected
- *  (actually or potentially) to defragmentation.  I.e. DF packets less than
- *  PMTU in size uses a constant ID and do not use this code (see
- *  ip_select_ident() in include/net/ip.h).
  *
- *  Route cache entries hold references to our nodes.
- *  New cache entries get references via lookup by destination IP address in
- *  the avl tree.  The reference is grabbed only when it's needed i.e. only
- *  when we try to output IP packet which needs an unpredictable ID (see
- *  __ip_select_ident() in net/ipv4/route.c).
  *  Nodes are removed only when reference counter goes to 0.
  *  When it's happened the node may be removed when a sufficient amount of
  *  time has been passed since its last use.  The less-recently-used entry can
@@ -61,10 +49,14 @@
  *		refcnt: atomically against modifications on other CPU;
  *		   usually under some other lock to prevent node disappearing
  *		daddr: unchangeable
- *		ip_id_count: atomic value (no lock needed)
  */
 
 static struct kmem_cache *peer_cachep __read_mostly;
+
+static LIST_HEAD(gc_list);
+static const int gc_delay = 60 * HZ;
+static struct delayed_work gc_work;
+static DEFINE_SPINLOCK(gc_lock);
 
 #define node_height(x) x->avl_height
 
@@ -102,6 +94,50 @@ int inet_peer_threshold __read_mostly = 65536 + 128;	/* start to throw entries m
 int inet_peer_minttl __read_mostly = 120 * HZ;	/* TTL under high load: 120 sec */
 int inet_peer_maxttl __read_mostly = 10 * 60 * HZ;	/* usual time to live: 10 min */
 
+static void inetpeer_gc_worker(struct work_struct *work)
+{
+	struct inet_peer *p, *n;
+	LIST_HEAD(list);
+
+	spin_lock_bh(&gc_lock);
+	list_replace_init(&gc_list, &list);
+	spin_unlock_bh(&gc_lock);
+
+	if (list_empty(&list))
+		return;
+
+	list_for_each_entry_safe(p, n, &list, gc_list) {
+
+		if(need_resched())
+			cond_resched();
+
+		if (p->avl_left != peer_avl_empty) {
+			list_add_tail(&p->avl_left->gc_list, &list);
+			p->avl_left = peer_avl_empty;
+		}
+
+		if (p->avl_right != peer_avl_empty) {
+			list_add_tail(&p->avl_right->gc_list, &list);
+			p->avl_right = peer_avl_empty;
+		}
+
+		n = list_entry(p->gc_list.next, struct inet_peer, gc_list);
+
+		if (!atomic_read(&p->refcnt)) {
+			list_del(&p->gc_list);
+			kmem_cache_free(peer_cachep, p);
+		}
+	}
+
+	if (list_empty(&list))
+		return;
+
+	spin_lock_bh(&gc_lock);
+	list_splice(&list, &gc_list);
+	spin_unlock_bh(&gc_lock);
+
+	schedule_delayed_work(&gc_work, gc_delay);
+}
 
 /* Called from ip_output.c:ip_init  */
 void __init inet_initpeers(void)
@@ -126,6 +162,7 @@ void __init inet_initpeers(void)
 			0, SLAB_HWCACHE_ALIGN | SLAB_PANIC,
 			NULL);
 
+	INIT_DELAYED_WORK_DEFERRABLE(&gc_work, inetpeer_gc_worker);
 }
 
 static int addr_compare(const struct inetpeer_addr *a,
@@ -437,10 +474,6 @@ relookup:
 		p->daddr = *daddr;
 		atomic_set(&p->refcnt, 1);
 		atomic_set(&p->rid, 0);
-		atomic_set(&p->ip_id_count,
-				(daddr->family == AF_INET) ?
-					secure_ip_id(daddr->addr.a4) :
-					secure_ipv6_id(daddr->addr.a6));
 		p->tcp_ts_stamp = 0;
 		p->metrics[RTAX_LOCK-1] = INETPEER_METRICS_NEW;
 		p->rate_tokens = 0;
@@ -448,7 +481,7 @@ relookup:
 		p->pmtu_expires = 0;
 		p->pmtu_orig = 0;
 		memset(&p->redirect_learned, 0, sizeof(p->redirect_learned));
-
+		INIT_LIST_HEAD(&p->gc_list);
 
 		/* Link the node. */
 		link_to_pool(p, base);
@@ -508,3 +541,38 @@ bool inet_peer_xrlim_allow(struct inet_peer *peer, int timeout)
 	return rc;
 }
 EXPORT_SYMBOL(inet_peer_xrlim_allow);
+
+static void inetpeer_inval_rcu(struct rcu_head *head)
+{
+	struct inet_peer *p = container_of(head, struct inet_peer, gc_rcu);
+
+	spin_lock_bh(&gc_lock);
+	list_add_tail(&p->gc_list, &gc_list);
+	spin_unlock_bh(&gc_lock);
+
+	schedule_delayed_work(&gc_work, gc_delay);
+}
+
+void inetpeer_invalidate_tree(int family)
+{
+	struct inet_peer *old, *new, *prev;
+	struct inet_peer_base *base = family_to_base(family);
+
+	write_seqlock_bh(&base->lock);
+
+	old = base->root;
+	if (old == peer_avl_empty_rcu)
+		goto out;
+
+	new = peer_avl_empty_rcu;
+
+	prev = cmpxchg(&base->root, old, new);
+	if (prev == old) {
+		base->total = 0;
+		call_rcu(&prev->gc_rcu, inetpeer_inval_rcu);
+	}
+
+out:
+	write_sequnlock_bh(&base->lock);
+}
+EXPORT_SYMBOL(inetpeer_invalidate_tree);
