@@ -14,7 +14,7 @@
 
 #include <linux/module.h>
 #include <linux/delay.h>
-#define DEBUG // enable dev_dbg() in linux/device.h
+#define DEBUG /* A hack to enable dev_dbg() in linux/device.h, Jim Partan, WHOI, 2015-07-29. */
 #include <linux/device.h>
 #include <linux/workqueue.h>
 #include <linux/tty.h>
@@ -56,9 +56,12 @@
 #define UART_MCR_TCRTLR			0x04	/* Enable / Disable TCR and TLR Register */
 #endif
 #define UART_MCR_IRDA_MODE		0x40	/* Enable / Disable IrDA Mode */
+
+/* Add a few more registers for status debugging. Jim Partan, WHOI, 2015-07-29. */
 #define UART_TLR    (0x07)
 #define UART_EFCR   (0x0F)
 
+/* A hack to get dev_dbg() messages into dmesg, Jim Partan, WHOI, 2015-07-29. */
 #ifdef dev_dbg
 #undef dev_dbg
 #define dev_dbg(dev, format, arg...)    dev_printk(KERN_DEBUG, dev, format, ##arg)
@@ -227,6 +230,27 @@ ignore_char:
 		tty_flip_buffer_push(tty);
 }
 
+/* sc16is7x2_handle_tx() function modified/hacked by Jim Partan, jpartan@whoi.edu, 2015-07-29.
+ *
+ * We were having problems on the WHOI-205049 Gumstix Interface board, where most TX characters
+ * were being dropped or garbled from /dev/eser{0,1}. Changes:
+ * 1.) I added a few debugging messages that will go into dmesg.
+ * 2.) I forced len to be 1 (or 0) so that at most one character at a time is written
+ *     over SPI to the SC16IS752 on the WHOI-205049 Gumstix Interface board. This seems
+ *     to be the critical fix.
+ * 3.) The logic on if(uart_circ_chars_pending(xmit)<WAKEUP_CHARS) { uart_write_wakeup(uart); }
+ *     sematically seemed backwards to me, admittedly not knowing anything about what that
+ *     function does or bothering to read it. So I added a uart_write_wakeup(uart) in the
+ *     other case as well, if(uart_circ_chars_pending(xmit)>=WAKEUP_CHARS). Didn't seem to
+ *     break anything...
+ *
+ * To properly debug why a multi-byte SPI transfer from the Gumstix to the SC16IS572 isn't working,
+ * one approach would be to make a custom FPGA build that dumps the SPI bus to an SPI logic analyzer
+ * connected to the WHOI-205049 DebugIO connected. Alternately, soldering wires onto the SC16IS572 pins
+ * might be an approach, but the QFN pins are sort of small, and I think the FPGA DebugIO approach
+ * would be easier.
+ *
+ */
 static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 {
 	struct sc16is7x2_channel *chan = &ts->channel[ch];
@@ -236,7 +260,7 @@ static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 	unsigned i, len;
 	int txlvl;
 
-	dev_dbg(&ts->spi->dev, " %s (%i) ENTERING sc16is7x2_handle_tx()\n", __func__, ch);
+	dev_dbg(&ts->spi->dev, " %s (%i) ENTERING sc16is7x2_handle_tx()\n", __func__, ch); /* Added by Jim Partan */
 	if (chan->uart.x_char && chan->lsr & UART_LSR_THRE) {
 		dev_dbg(&ts->spi->dev, " tx: x-char\n");
 		sc16is7x2_write(ts, UART_TX, ch, uart->x_char);
@@ -246,7 +270,7 @@ static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 	}
 	if (uart_circ_empty(xmit) || uart_tx_stopped(&chan->uart)) {
 		/* No data to send or TX is stopped */
-		dev_dbg(&ts->spi->dev, " %s (%i) no data to send or TX is stopped\n", __func__, ch);
+	        dev_dbg(&ts->spi->dev, " %s (%i) no data to send or TX is stopped\n", __func__, ch); /* Added by Jim Partan */
 		return;
 	}
 
@@ -260,32 +284,33 @@ static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 	len = min(txlvl, (int)uart_circ_chars_pending(xmit));
 
 	dev_dbg(&ts->spi->dev, " %s (%i) %d bytes\n", __func__, ch, len);
-	if (len>1) { len = 1; }
-	dev_dbg(&ts->spi->dev, " %s (%i) %d bytes - forcing to len=1\n", __func__, ch, len);
+	/* Hackishly force len<=1. Jim Partan, jpartan@whoi.edu, 2015-07-29. */
+	if (len>1) { len = 1; } /* Added by Jim Partan */
+	dev_dbg(&ts->spi->dev, " %s (%i) %d bytes - forcing to len=1\n", __func__, ch, len); /* Added by Jim Partan */
 
 	spin_lock_irqsave(&uart->lock, flags);
 	for (i = 1; i <= len ; i++) {
 		chan->buf[i] = xmit->buf[xmit->tail];
 		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
-		dev_dbg(&ts->spi->dev, " %s chan(%i)->buf[%d]=%c=0x%02x\n", __func__, ch, i, chan->buf[i], chan->buf[i]);
+		dev_dbg(&ts->spi->dev, " %s chan(%i)->buf[%d]=%c=0x%02x\n", __func__, ch, i, chan->buf[i], chan->buf[i]); /* Added by Jim Partan */
 	}
 	uart->icount.tx += len;
 	spin_unlock_irqrestore(&uart->lock, flags);
 
 	chan->buf[0] = write_cmd(UART_TX, ch);
-	dev_dbg(&ts->spi->dev, " %s (%i) chan->buf[0]=0x%02x (SPI tx cmd?)\n", __func__, ch, chan->buf[0]);
+	dev_dbg(&ts->spi->dev, " %s (%i) chan->buf[0]=0x%02x (SPI tx cmd?)\n", __func__, ch, chan->buf[0]); /* Added by Jim Partan */
 	if (spi_write(ts->spi, chan->buf, len + 1)) {
-	        dev_dbg(&ts->spi->dev, " %s (%i) SPI transfer TX handling failed\n", __func__, ch);
+	        dev_dbg(&ts->spi->dev, " %s (%i) SPI transfer TX handling failed\n", __func__, ch); /* Added by Jim Partan */
 		dev_err(&ts->spi->dev, " SPI transfer TX handling failed\n");
 	}
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS) {
-	        dev_dbg(&ts->spi->dev, " %s (%i) uart_write_wakeup()\n", __func__, ch);
-		uart_write_wakeup(uart);
+	        dev_dbg(&ts->spi->dev, " %s (%i) uart_write_wakeup()\n", __func__, ch); /* Added by Jim Partan */
+		uart_write_wakeup(uart); /* Hmmm... not sure if I understand this, but this logic seems backwards?? */
 	} else {
-	        dev_dbg(&ts->spi->dev, " %s (%i) WASN'T GOING TO WAKE UP... BUT FORCING WAKE UP\n", __func__, ch);
-		uart_write_wakeup(uart);
+	        dev_dbg(&ts->spi->dev, " %s (%i) WASN'T GOING TO WAKE UP... BUT FORCING WAKE UP\n", __func__, ch); /* Added by Jim Partan */
+		uart_write_wakeup(uart); /* Added by Jim Partan - didn't seem to break anything? */
 	}
-	dev_dbg(&ts->spi->dev, " %s (%i) RETURNING FROM sc16is7x2_handle_tx()\n", __func__, ch);
+	dev_dbg(&ts->spi->dev, " %s (%i) RETURNING FROM sc16is7x2_handle_tx()\n", __func__, ch); /* Added by Jim Partan */
 } 
 
 
@@ -334,18 +359,18 @@ static void sc16is7x2_read_status(struct sc16is7x2_chip *ts, unsigned ch)
 	struct spi_transfer t;
 	u8 *buf = chan->buf; */
 	u8 ier;
-	u8 lcr, mcr, tcr, tlr, efcr, efr;
+	u8 lcr, mcr, tcr, tlr, efcr, efr; /* Added by Jim Partan, jpartan@whoi.edu, 2015-07-29. */
 
 #ifdef DEBUG
 	ier = sc16is7x2_read(ts, UART_IER, ch);
-	lcr = sc16is7x2_read(ts, UART_LCR, ch);
+	lcr = sc16is7x2_read(ts, UART_LCR, ch); /* All of these (LCR, MCR, TCR, TLR, EFCR, EFR) Added by Jim Partan, jpartan@whoi.edu, 2015-07-29. */
 	mcr = sc16is7x2_read(ts, UART_MCR, ch);
 	tcr = sc16is7x2_read(ts, UART_TCR, ch);
 	tlr = sc16is7x2_read(ts, UART_TLR, ch);
 	efcr = sc16is7x2_read(ts, UART_EFCR, ch);
 	efr = sc16is7x2_read(ts, UART_EFR, ch);
 #else
-	ier = lcr = mcr = tcr = tlr = efcr = efr = 0xff;
+	ier = lcr = mcr = tcr = tlr = efcr = efr = 0xff; /* Added by Jim Partan, jpartan@whoi.edu, 2015-07-29. */
 #endif
 	chan->iir = sc16is7x2_read(ts, UART_IIR, ch);
 	chan->msr = sc16is7x2_read(ts, UART_MSR, ch);
@@ -367,6 +392,7 @@ static void sc16is7x2_read_status(struct sc16is7x2_chip *ts, unsigned ch)
 	dev_dbg(&ts->spi->dev, " %s ier=0x%02x iir=0x%02x msr=0x%02x lsr=0x%02x\n",
 			__func__, ier, chan->iir, chan->msr, chan->lsr);
 
+	/* Print out the status of a bunch of other registers. Added by Jim Partan, jpartan@whoi.edu, 2015-07-29. */
 	dev_dbg(&ts->spi->dev, " %s lcr=0x%02x mcr=0x%02x tcr=0x%02x tlr=0x%02x efcr=0x%02x efr=0x%02x\n",
 		__func__, lcr, mcr, tcr, tlr, efcr, efr);
 /*
