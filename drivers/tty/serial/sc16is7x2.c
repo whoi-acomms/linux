@@ -14,6 +14,7 @@
 
 #include <linux/module.h>
 #include <linux/delay.h>
+#define DEBUG // enable dev_dbg() in linux/device.h
 #include <linux/device.h>
 #include <linux/workqueue.h>
 #include <linux/tty.h>
@@ -55,7 +56,13 @@
 #define UART_MCR_TCRTLR			0x04	/* Enable / Disable TCR and TLR Register */
 #endif
 #define UART_MCR_IRDA_MODE		0x40	/* Enable / Disable IrDA Mode */
+#define UART_TLR    (0x07)
+#define UART_EFCR   (0x0F)
 
+#ifdef dev_dbg
+#undef dev_dbg
+#define dev_dbg(dev, format, arg...)    dev_printk(KERN_DEBUG, dev, format, ##arg)
+#endif
 
 struct sc16is7x2_chip;
 
@@ -229,6 +236,7 @@ static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 	unsigned i, len;
 	int txlvl;
 
+	dev_dbg(&ts->spi->dev, " %s (%i) ENTERING sc16is7x2_handle_tx()\n", __func__, ch);
 	if (chan->uart.x_char && chan->lsr & UART_LSR_THRE) {
 		dev_dbg(&ts->spi->dev, " tx: x-char\n");
 		sc16is7x2_write(ts, UART_TX, ch, uart->x_char);
@@ -236,9 +244,11 @@ static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 		uart->x_char = 0;
 		return;
 	}
-	if (uart_circ_empty(xmit) || uart_tx_stopped(&chan->uart))
+	if (uart_circ_empty(xmit) || uart_tx_stopped(&chan->uart)) {
 		/* No data to send or TX is stopped */
+		dev_dbg(&ts->spi->dev, " %s (%i) no data to send or TX is stopped\n", __func__, ch);
 		return;
+	}
 
 	txlvl = sc16is7x2_read(ts, REG_TXLVL, ch);
 	if (txlvl <= 0) {
@@ -250,22 +260,34 @@ static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 	len = min(txlvl, (int)uart_circ_chars_pending(xmit));
 
 	dev_dbg(&ts->spi->dev, " %s (%i) %d bytes\n", __func__, ch, len);
+	if (len>1) { len = 1; }
+	dev_dbg(&ts->spi->dev, " %s (%i) %d bytes - forcing to len=1\n", __func__, ch, len);
 
 	spin_lock_irqsave(&uart->lock, flags);
 	for (i = 1; i <= len ; i++) {
 		chan->buf[i] = xmit->buf[xmit->tail];
 		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		dev_dbg(&ts->spi->dev, " %s chan(%i)->buf[%d]=%c=0x%02x\n", __func__, ch, i, chan->buf[i], chan->buf[i]);
 	}
 	uart->icount.tx += len;
 	spin_unlock_irqrestore(&uart->lock, flags);
 
 	chan->buf[0] = write_cmd(UART_TX, ch);
-	if (spi_write(ts->spi, chan->buf, len + 1))
+	dev_dbg(&ts->spi->dev, " %s (%i) chan->buf[0]=0x%02x (SPI tx cmd?)\n", __func__, ch, chan->buf[0]);
+	if (spi_write(ts->spi, chan->buf, len + 1)) {
+	        dev_dbg(&ts->spi->dev, " %s (%i) SPI transfer TX handling failed\n", __func__, ch);
 		dev_err(&ts->spi->dev, " SPI transfer TX handling failed\n");
-
-	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
+	}
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS) {
+	        dev_dbg(&ts->spi->dev, " %s (%i) uart_write_wakeup()\n", __func__, ch);
 		uart_write_wakeup(uart);
-}
+	} else {
+	        dev_dbg(&ts->spi->dev, " %s (%i) WASN'T GOING TO WAKE UP... BUT FORCING WAKE UP\n", __func__, ch);
+		uart_write_wakeup(uart);
+	}
+	dev_dbg(&ts->spi->dev, " %s (%i) RETURNING FROM sc16is7x2_handle_tx()\n", __func__, ch);
+} 
+
 
 static void sc16is7x2_handle_baud(struct sc16is7x2_chip *ts, unsigned ch)
 {
@@ -312,9 +334,18 @@ static void sc16is7x2_read_status(struct sc16is7x2_chip *ts, unsigned ch)
 	struct spi_transfer t;
 	u8 *buf = chan->buf; */
 	u8 ier;
+	u8 lcr, mcr, tcr, tlr, efcr, efr;
 
 #ifdef DEBUG
 	ier = sc16is7x2_read(ts, UART_IER, ch);
+	lcr = sc16is7x2_read(ts, UART_LCR, ch);
+	mcr = sc16is7x2_read(ts, UART_MCR, ch);
+	tcr = sc16is7x2_read(ts, UART_TCR, ch);
+	tlr = sc16is7x2_read(ts, UART_TLR, ch);
+	efcr = sc16is7x2_read(ts, UART_EFCR, ch);
+	efr = sc16is7x2_read(ts, UART_EFR, ch);
+#else
+	ier = lcr = mcr = tcr = tlr = efcr = efr = 0xff;
 #endif
 	chan->iir = sc16is7x2_read(ts, UART_IIR, ch);
 	chan->msr = sc16is7x2_read(ts, UART_MSR, ch);
@@ -335,6 +366,9 @@ static void sc16is7x2_read_status(struct sc16is7x2_chip *ts, unsigned ch)
 
 	dev_dbg(&ts->spi->dev, " %s ier=0x%02x iir=0x%02x msr=0x%02x lsr=0x%02x\n",
 			__func__, ier, chan->iir, chan->msr, chan->lsr);
+
+	dev_dbg(&ts->spi->dev, " %s lcr=0x%02x mcr=0x%02x tcr=0x%02x tlr=0x%02x efcr=0x%02x efr=0x%02x\n",
+		__func__, lcr, mcr, tcr, tlr, efcr, efr);
 /*
 	dev_dbg(&ts->spi->dev, " %s ier=0x%02x iir=0x%02x msr=0x%02x lsr=0x%02x\n",
 			__func__, buf[17], buf[18], buf[19], buf[20]);
