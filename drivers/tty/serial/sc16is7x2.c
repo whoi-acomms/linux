@@ -66,6 +66,9 @@
 #undef dev_dbg
 #define dev_dbg(dev, format, arg...)    dev_printk(KERN_DEBUG, dev, format, ##arg)
 #endif
+#define DEBUG_SC16IS7X2_LEVEL  (1)      /* 1 for basic printk()'s, 0 for all printk()'s */
+#define dev_dbg_sc16is7x2(level, dev, format, arg...) ((level>=DEBUG_SC16IS7X2_LEVEL) && dev_printk(KERN_DEBUG, dev, format, ##arg))
+#define isgraph_sc16is7x2(c) ((c)>0x20 && (c)<=0x7E)
 
 struct sc16is7x2_chip;
 
@@ -250,6 +253,14 @@ ignore_char:
  * might be an approach, but the QFN pins are sort of small, and I think the FPGA DebugIO approach
  * would be easier.
  *
+ * One possibility is that the NXP SC16IS752 only has one internal clock domain, using its crystal
+ * (which is 22.1184MHz for the WHOI-205049 boards, at least revisions A-E). If the SPI clock driven
+ * by the Gumstix SPI master does not divide well into 22.1184MHz, then if NXP did not do a good
+ * job synchronizing the clock domains between the SPI master clock and the internal 22.1184MHz clock,
+ * then longer SPI transfers could slip clocks (slip bits) until the SPI interface stops working
+ * properly. Replacing the crystal and changing the software divisors would then be a potential
+ * hardware fix.
+ *
  */
 static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 {
@@ -260,7 +271,8 @@ static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 	unsigned i, len;
 	int txlvl;
 
-	dev_dbg(&ts->spi->dev, " %s (%i) ENTERING sc16is7x2_handle_tx()\n", __func__, ch); /* Added by Jim Partan */
+	dev_dbg_sc16is7x2(0, &ts->spi->dev, " %s (%i) ENTERING sc16is7x2_handle_tx()\n", __func__, ch); /* Added by Jim Partan */
+
 	if (chan->uart.x_char && chan->lsr & UART_LSR_THRE) {
 		dev_dbg(&ts->spi->dev, " tx: x-char\n");
 		sc16is7x2_write(ts, UART_TX, ch, uart->x_char);
@@ -270,7 +282,7 @@ static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 	}
 	if (uart_circ_empty(xmit) || uart_tx_stopped(&chan->uart)) {
 		/* No data to send or TX is stopped */
-	        dev_dbg(&ts->spi->dev, " %s (%i) no data to send or TX is stopped\n", __func__, ch); /* Added by Jim Partan */
+	        dev_dbg_sc16is7x2(0, &ts->spi->dev, " %s (%i) no data to send or TX is stopped\n", __func__, ch); /* Added by Jim Partan */
 		return;
 	}
 
@@ -279,38 +291,44 @@ static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 		dev_dbg(&ts->spi->dev, " %s (%i) fifo full\n", __func__, ch);
 		return;
 	}
+	/* Hackishly force len<=1. if(txlvl>1) conditional statements added by Jim Partan, jpartan@whoi.edu, 2015-07-30. */
+	if (txlvl > 1) {
+	  dev_dbg_sc16is7x2(1, &ts->spi->dev, " %s (%i) %d bytes - forcing txlvl from %d to 1 to fix broken SC16IS7x2\n", __func__, ch, txlvl, txlvl);
+	        txlvl = 1;
+	}
 
 	/* number of bytes to transfer to the fifo */
 	len = min(txlvl, (int)uart_circ_chars_pending(xmit));
-
 	dev_dbg(&ts->spi->dev, " %s (%i) %d bytes\n", __func__, ch, len);
-	/* Hackishly force len<=1. Jim Partan, jpartan@whoi.edu, 2015-07-29. */
-	if (len>1) { len = 1; } /* Added by Jim Partan */
-	dev_dbg(&ts->spi->dev, " %s (%i) %d bytes - forcing to len=1\n", __func__, ch, len); /* Added by Jim Partan */
 
 	spin_lock_irqsave(&uart->lock, flags);
 	for (i = 1; i <= len ; i++) {
 		chan->buf[i] = xmit->buf[xmit->tail];
 		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
-		dev_dbg(&ts->spi->dev, " %s chan(%i)->buf[%d]=%c=0x%02x\n", __func__, ch, i, chan->buf[i], chan->buf[i]); /* Added by Jim Partan */
+		/* Added by Jim Partan */
+		if (isgraph_sc16is7x2(chan->buf[i])) {
+		        dev_dbg_sc16is7x2(1, &ts->spi->dev, " %s chan(%i)->buf[%d]=0x%02x=%c\n", __func__, ch, i, chan->buf[i], chan->buf[i]);
+		} else {
+		        dev_dbg_sc16is7x2(1, &ts->spi->dev, " %s chan(%i)->buf[%d]=0x%02x\n", __func__, ch, i, chan->buf[i]);
+		}
 	}
 	uart->icount.tx += len;
 	spin_unlock_irqrestore(&uart->lock, flags);
 
 	chan->buf[0] = write_cmd(UART_TX, ch);
-	dev_dbg(&ts->spi->dev, " %s (%i) chan->buf[0]=0x%02x (SPI tx cmd?)\n", __func__, ch, chan->buf[0]); /* Added by Jim Partan */
+	dev_dbg_sc16is7x2(0, &ts->spi->dev, " %s (%i) chan->buf[0]=0x%02x (SPI tx cmd?)\n", __func__, ch, chan->buf[0]); /* Added by Jim Partan */
 	if (spi_write(ts->spi, chan->buf, len + 1)) {
-	        dev_dbg(&ts->spi->dev, " %s (%i) SPI transfer TX handling failed\n", __func__, ch); /* Added by Jim Partan */
+	        dev_dbg_sc16is7x2(0, &ts->spi->dev, " %s (%i) SPI transfer TX handling failed\n", __func__, ch); /* Added by Jim Partan */
 		dev_err(&ts->spi->dev, " SPI transfer TX handling failed\n");
 	}
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS) {
-	        dev_dbg(&ts->spi->dev, " %s (%i) uart_write_wakeup()\n", __func__, ch); /* Added by Jim Partan */
+	        dev_dbg_sc16is7x2(0, &ts->spi->dev, " %s (%i) uart_write_wakeup()\n", __func__, ch); /* Added by Jim Partan */
 		uart_write_wakeup(uart); /* Hmmm... not sure if I understand this, but this logic seems backwards?? */
 	} else {
-	        dev_dbg(&ts->spi->dev, " %s (%i) WASN'T GOING TO WAKE UP... BUT FORCING WAKE UP\n", __func__, ch); /* Added by Jim Partan */
+	        dev_dbg_sc16is7x2(0, &ts->spi->dev, " %s (%i) WASN'T GOING TO WAKE UP... BUT FORCING WAKE UP\n", __func__, ch); /* Added by Jim Partan */
 		uart_write_wakeup(uart); /* Added by Jim Partan - didn't seem to break anything? */
 	}
-	dev_dbg(&ts->spi->dev, " %s (%i) RETURNING FROM sc16is7x2_handle_tx()\n", __func__, ch); /* Added by Jim Partan */
+	dev_dbg_sc16is7x2(0, &ts->spi->dev, " %s (%i) RETURNING FROM sc16is7x2_handle_tx()\n", __func__, ch); /* Added by Jim Partan */
 } 
 
 
