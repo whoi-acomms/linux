@@ -624,6 +624,9 @@ static int sc16is7x2_startup(struct uart_port *port)
 
 	/* Setup IRQ. Actually we have a low active IRQ, but we want
 	 * one shot behaviour */
+
+    printk(KERN_NOTICE "sc16is7x2_startup IRQ %i\n", ts->spi->irq); 
+
 	if (request_irq(ts->spi->irq, sc16is7x2_irq,
 			IRQF_TRIGGER_FALLING | IRQF_SHARED,
 			"sc16is7x2", chan)) {

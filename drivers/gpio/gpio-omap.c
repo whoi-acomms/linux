@@ -343,6 +343,11 @@ static int _set_gpio_triggering(struct gpio_bank *bank, int gpio,
 	void __iomem *base = bank->base;
 	u32 l = 0;
 
+    printk(KERN_INFO "_set_gpio_triggering Bank: %p\n", bank);
+    printk(KERN_INFO "_set_gpio_triggering IRQ: %i\n", bank->irq);
+    printk(KERN_INFO "_set_gpio_triggering IRQ Base: %i\n", bank->irq_base);
+    printk(KERN_INFO "_set_gpio_triggering GPIO: %i\n", gpio);
+    
 	if (bank->regs->leveldetect0 && bank->regs->wkup_en) {
 		set_gpio_trigger(bank, gpio, trigger);
 	} else if (bank->regs->irqctrl) {
@@ -385,15 +390,23 @@ static int _set_gpio_triggering(struct gpio_bank *bank, int gpio,
 static int gpio_irq_type(struct irq_data *d, unsigned type)
 {
 	struct gpio_bank *bank = irq_data_get_irq_chip_data(d);
-	unsigned gpio;
+
+    unsigned gpio;
 	int retval;
 	unsigned long flags;
+
+    printk(KERN_INFO "gpio_irq_type irq_data IRQ: %i\n", d->irq);
+    printk(KERN_INFO "gpio_irq_type Bank: %p\n", bank);
+    printk(KERN_INFO "gpio_irq_type IRQ: %i\n", bank->irq);
 
 	if (!cpu_class_is_omap2() && d->irq > IH_MPUIO_BASE)
 		gpio = OMAP_MPUIO(d->irq - IH_MPUIO_BASE);
 	else
+    {
 		gpio = irq_to_gpio(bank, d->irq);
-
+        printk(KERN_INFO "gpio_irq_type GPIO: %i\n", gpio);
+    }
+    
 	if (type & ~IRQ_TYPE_SENSE_MASK)
 		return -EINVAL;
 
