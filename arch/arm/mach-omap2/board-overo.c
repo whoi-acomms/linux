@@ -635,6 +635,7 @@ static struct sc16is7x2_platform_data sc16is7x2_pdata = {
 	.uartclk	= 22118400,
 	.uart_base	= 0,
 	.gpio_base	= OMAP_MAX_GPIO_LINES + TWL4030_GPIO_MAX + 4,
+    .irq_gpio   = OVERO_GPIO_PENDOWN,
 };
 #endif
 
@@ -648,7 +649,7 @@ static struct spi_board_info overo_spi_board_info[] __initdata = {
 		.bus_num		= 1,
 		.chip_select		= 0,
 		.max_speed_hz		= 4000000,
-		.irq			= -1, /* set during init */
+		.irq			= -1, /* set by driver from GPIO */
 		.platform_data		= &sc16is7x2_pdata,
 		.mode			= SPI_MODE_0,
 	},
@@ -687,12 +688,6 @@ static int __init overo_spi_init(void)
 {
 	overo_ads7846_init();
 
-#if !defined(CONFIG_TOUCHSCREEN_ADS7846) &&        \
-	!defined(CONFIG_TOUCHSCREEN_ADS7846_MODULE) && \
-	defined(CONFIG_SERIAL_SC16IS7X2) || defined(CONFIG_SERIAL_SC16IS7X2_MODULE)
-    overo_spi_board_info[0].irq = gpio_to_irq(OVERO_GPIO_PENDOWN);
-#endif
-        
 	spi_register_board_info(overo_spi_board_info,
 			ARRAY_SIZE(overo_spi_board_info));
 	return 0;

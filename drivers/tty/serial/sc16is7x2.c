@@ -1104,9 +1104,24 @@ static int __devinit sc16is7x2_probe(struct spi_device *spi)
 	if (ret)
 		goto exit_uart1;
 
-	dev_info(&spi->dev, DRIVER_NAME " at CS%d (irq %d), 2 UARTs, 8 GPIOs\n"
+    /* Initialize GPIO */
+    spi->irq = gpio_to_irq(pdata->irq_gpio);
+    ret = gpio_request(pdata->irq_gpio, "SC16IS7X2_IRQ_GPIO");
+	if (ret) {
+		pr_warning("failed to request GPIO %u\n", pdata->irq_gpio);
+		return -EINVAL;
+	}
+
+	ret = gpio_direction_input(pdata->irq_gpio);
+	if (ret) {
+		pr_warning("failed to set pin direction to input\n");
+		gpio_free(pdata->irq_gpio);
+		return -EINVAL;
+	}
+    
+	dev_info(&spi->dev, DRIVER_NAME " at CS%d (gpio %d, irq %d), 2 UARTs, 8 GPIOs\n"
 			"    eser%d, eser%d, gpiochip%d\n",
-			spi->chip_select, spi->irq,
+			spi->chip_select, pdata->irq_gpio, spi->irq,
 			pdata->uart_base, pdata->uart_base + 1,
 			pdata->gpio_base);
 

@@ -12,6 +12,8 @@ struct sc16is7x2_platform_data {
 	char		*label;
 	/* list of GPIO names (array length = SC16IS7X2_NR_GPIOS) */
 	const char	*const *names;
+    /* GPIO used as IRQ */
+    unsigned    irq_gpio;
 };
 
 #endif
