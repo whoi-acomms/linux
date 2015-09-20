@@ -14,7 +14,6 @@
 
 #include <linux/module.h>
 #include <linux/delay.h>
-#define DEBUG /* A hack to enable dev_dbg() in linux/device.h, Jim Partan, WHOI, 2015-07-29. */
 #include <linux/device.h>
 #include <linux/workqueue.h>
 #include <linux/tty.h>
@@ -61,12 +60,7 @@
 #define UART_TLR    (0x07)
 #define UART_EFCR   (0x0F)
 
-/* A hack to get dev_dbg() messages into dmesg, Jim Partan, WHOI, 2015-07-29. */
-#ifdef dev_dbg
-#undef dev_dbg
-#define dev_dbg(dev, format, arg...)    dev_printk(KERN_DEBUG, dev, format, ##arg)
-#endif
-#define DEBUG_SC16IS7X2_LEVEL  (1)      /* 1 for basic printk()'s, 0 for all printk()'s */
+#define DEBUG_SC16IS7X2_LEVEL (2)      /* 1 for basic printk()'s, 0 for all printk()'s */
 #define dev_dbg_sc16is7x2(level, dev, format, arg...) ((level>=DEBUG_SC16IS7X2_LEVEL) && dev_printk(KERN_DEBUG, dev, format, ##arg))
 #define isgraph_sc16is7x2(c) ((c)>0x20 && (c)<=0x7E)
 
