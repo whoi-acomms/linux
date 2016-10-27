@@ -62,10 +62,11 @@
 #define UART_EFCR   (0x0F)
 
 /* A hack to get dev_dbg() messages into dmesg, Jim Partan, WHOI, 2015-07-29. */
-#ifdef dev_dbg
-#undef dev_dbg
-#define dev_dbg(dev, format, arg...)    dev_printk(KERN_DEBUG, dev, format, ##arg)
-#endif
+//#ifdef dev_dbg
+//#undef dev_dbg
+//#define dev_dbg(dev, format, arg...)    dev_printk(KERN_DEBUG, dev, format, ##arg)
+//#endif
+
 #define DEBUG_SC16IS7X2_LEVEL  (1)      /* 1 for basic printk()'s, 0 for all printk()'s */
 #define dev_dbg_sc16is7x2(level, dev, format, arg...) ((level>=DEBUG_SC16IS7X2_LEVEL) && dev_printk(KERN_DEBUG, dev, format, ##arg))
 #define isgraph_sc16is7x2(c) ((c)>0x20 && (c)<=0x7E)
@@ -293,7 +294,7 @@ static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 	}
 	/* Hackishly force len<=1. if(txlvl>1) conditional statements added by Jim Partan, jpartan@whoi.edu, 2015-07-30. */
 	if (txlvl > 1) {
-	  dev_dbg_sc16is7x2(1, &ts->spi->dev, " %s (%i) %d bytes - forcing txlvl from %d to 1 to fix broken SC16IS7x2\n", __func__, ch, txlvl, txlvl);
+	  dev_dbg_sc16is7x2(0, &ts->spi->dev, " %s (%i) %d bytes - forcing txlvl from %d to 1 to fix broken SC16IS7x2\n", __func__, ch, txlvl, txlvl);
 	        txlvl = 1;
 	}
 
@@ -307,9 +308,9 @@ static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
 		/* Added by Jim Partan */
 		if (isgraph_sc16is7x2(chan->buf[i])) {
-		        dev_dbg_sc16is7x2(1, &ts->spi->dev, " %s chan(%i)->buf[%d]=0x%02x=%c\n", __func__, ch, i, chan->buf[i], chan->buf[i]);
+		        dev_dbg_sc16is7x2(0, &ts->spi->dev, " %s chan(%i)->buf[%d]=0x%02x=%c\n", __func__, ch, i, chan->buf[i], chan->buf[i]);
 		} else {
-		        dev_dbg_sc16is7x2(1, &ts->spi->dev, " %s chan(%i)->buf[%d]=0x%02x\n", __func__, ch, i, chan->buf[i]);
+		        dev_dbg_sc16is7x2(0, &ts->spi->dev, " %s chan(%i)->buf[%d]=0x%02x\n", __func__, ch, i, chan->buf[i]);
 		}
 	}
 	uart->icount.tx += len;
