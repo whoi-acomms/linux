@@ -14,7 +14,7 @@
 
 #include <linux/module.h>
 #include <linux/delay.h>
-#define DEBUG /* A hack to enable dev_dbg() in linux/device.h, Jim Partan, WHOI, 2015-07-29. */
+// #define DEBUG /* A hack to enable dev_dbg() in linux/device.h, Jim Partan, WHOI, 2015-07-29. */
 #include <linux/device.h>
 #include <linux/workqueue.h>
 #include <linux/tty.h>
